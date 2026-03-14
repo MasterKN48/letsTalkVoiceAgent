@@ -1,124 +1,177 @@
 import os
-import torch
-import whisper
-import time
 import gc
-import edge_tts
-from transformers import MarianMTModel, MarianTokenizer
+import time  # only if you plan to use it
+from dotenv import load_dotenv
+
+import torch
+from huggingface_hub import snapshot_download
+
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
+
+# MLX-Audio imports
+from mlx_audio.stt.utils import load_model as load_asr
+from mlx_audio.stt.generate import generate_transcription
+from mlx_audio.tts.utils import load_model as load_tts
+from mlx_audio.tts.generate import generate_audio
+
 
 class VoiceTranslationPipeline:
-    def __init__(self, use_gpu=False):
+    def __init__(self, use_gpu: bool = False):
+        # Device selection (Torch only used for device/memory here)
         self.device = (
             "cuda:0"
             if torch.cuda.is_available()
             else ("mps" if torch.backends.mps.is_available() else "cpu")
         )
 
-        # Calculate project root and models directory
+        # Project root and models directory
         self.project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.models_dir = os.path.join(self.project_root, "models")
         os.makedirs(self.models_dir, exist_ok=True)
-        
-        # Whisper model directory
-        self.whisper_cache = os.path.join(self.models_dir, "whisper")
-        os.makedirs(self.whisper_cache, exist_ok=True)
 
-        print(f"Initializing Pipeline on {self.device}")
+        print("Initializing Native MLX-Audio Pipeline")
         print(f"Models directory: {self.models_dir}")
 
-        # 1. STT: Whisper Tiny (downloading to models/whisper)
-        self.stt_model = whisper.load_model("tiny", device=self.device, download_root=self.whisper_cache)
+        load_dotenv()
+        os.environ["HF_TOKEN"] = os.getenv("HF_TOKEN", "")
 
-        # 2. MT: Cached models and tokenizers
-        self.mt_models = {}
-        self.mt_tokenizers = {}
-        self.mt_cache = os.path.join(self.models_dir, "mt")
-        os.makedirs(self.mt_cache, exist_ok=True)
+        # 1. STT: MLX-optimized Qwen3-ASR (or other ASR)
+        self.asr_repo = os.getenv("ASR_MODEL", "mlx-community/Qwen3-ASR-0.6B-5bit")
+        self.asr_path = self._ensure_local_model(self.asr_repo, "asr")
+        self.asr_model = load_asr(self.asr_path)
 
-        # 3. TTS: Edge-TTS
-        self.supported_langs = ["en", "es", "fr", "de"]
+        # 2. TTS: MLX-optimized Qwen3-TTS (or other TTS)
+        self.tts_repo = os.getenv("TTS_MODEL", "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit")
+        self.tts_path = self._ensure_local_model(self.tts_repo, "tts")
+        self.tts_model = load_tts(self.tts_path)
 
-    def _get_mt_model(self, src, tgt):
-        key = f"{src}-{tgt}"
-        if key not in self.mt_models:
-            model_name = f"Helsinki-NLP/opus-mt-{src}-{tgt}"
-            print(f"Loading MT model: {model_name}")
-            
-            # Using cache_dir to ensure models are saved in models/mt
-            self.mt_tokenizers[key] = MarianTokenizer.from_pretrained(
-                model_name, cache_dir=self.mt_cache
-            )
-            self.mt_models[key] = MarianMTModel.from_pretrained(
-                model_name, cache_dir=self.mt_cache
-            ).to(self.device)
-            self.mt_models[key].eval()
-        return self.mt_models[key], self.mt_tokenizers[key]
+        # 3. MT: Local OpenAI-compatible API via LangChain
+        api_base = os.getenv("LOCAL_LLM_URL", "http://127.0.0.1:1234/v1")
+        llm_model = os.getenv("LLM_MODEL", "qwen3.5-0.8b")
+        print(f"Initializing Local Translation LLM at: {api_base} with model: {llm_model}")
 
-    def translate_text(self, text, src_lang, tgt_lang):
+        self.llm = ChatOpenAI(
+            base_url=api_base,
+            api_key="not-needed",  # local server usually ignores this
+            model=llm_model,
+            temperature=0,
+        )
+
+        self.translate_prompt = ChatPromptTemplate.from_template(
+            "You are a professional translator. Translate the following text from "
+            "{src_lang} to {tgt_lang}. Only return the translated text without any "
+            "explanations.\n\n"
+            "Text: {text}\n"
+            "Translation:"
+        )
+
+    # -------------------------------------------------------------------------
+    # Helpers
+    # -------------------------------------------------------------------------
+    def _ensure_local_model(self, repo_id: str, sub_dir: str) -> str:
+        """
+        Downloads model from Hugging Face into a local subdirectory if not present,
+        and returns that local path.
+        """
+        local_path = os.path.join(self.models_dir, sub_dir)
+        if not os.path.exists(local_path) or not os.listdir(local_path):
+            print(f"Downloading model {repo_id} to {local_path}...")
+            snapshot_download(repo_id=repo_id, local_dir=local_path)
+        else:
+            print(f"Using local model: {local_path}")
+        return local_path
+
+    # -------------------------------------------------------------------------
+    # Translation LLM
+    # -------------------------------------------------------------------------
+    def translate_text(self, text: str, src_lang: str, tgt_lang: str) -> str:
+        """
+        Translate text from src_lang to tgt_lang using the local LLM.
+        If languages are same or text is empty, return the original text.
+        """
         if src_lang == tgt_lang or not text.strip():
             return text
-        model, tokenizer = self._get_mt_model(src_lang, tgt_lang)
-        tokens = tokenizer(text, return_tensors="pt", padding=True).to(self.device)
-        with torch.no_grad():
-            translated = model.generate(**tokens, max_new_tokens=64, num_beams=1, do_sample=False)
-        return tokenizer.decode(translated[0], skip_special_tokens=True)
 
-    async def text_to_speech(self, text, tgt_lang, output_path):
-        voices = {
-            "en": "en-US-GuyNeural",
-            "es": "es-ES-AlvaroNeural",
-            "fr": "fr-FR-HenriNeural",
-            "de": "de-DE-ConradNeural",
-        }
-        voice = voices.get(tgt_lang, "en-US-GuyNeural")
-        communicate = edge_tts.Communicate(text, voice)
-        await communicate.save(output_path)
+        print(f"Translating via Local LLM: {src_lang} -> {tgt_lang}")
+        chain = self.translate_prompt | self.llm
+        response = chain.invoke({"src_lang": src_lang, "tgt_lang": tgt_lang, "text": text})
+        return response.content.strip()
 
-    def load_audio_whisper(self, audio_path):
-        import librosa
-        import numpy as np
+    # -------------------------------------------------------------------------
+    # Text-to-Speech (TTS)
+    # -------------------------------------------------------------------------
+    async def text_to_speech(self, text: str, tgt_lang: str, output_path: str):
+        """
+        Generate speech audio from text using MLX-optimized Qwen3-TTS.
+        output_path is treated as the directory where audio is written.
+        """
+        print(f"Generating TTS for language: {tgt_lang}")
+        os.makedirs(output_path, exist_ok=True)
 
-        # Load audio and resample to 16kHz as required by Whisper
-        audio, _ = librosa.load(audio_path, sr=16000)
-        return audio.astype(np.float32)
+        # You can map tgt_lang -> lang_code if needed (e.g., "en" -> "a" for Kokoro).
+        # For Qwen3-TTS, you often just leave it to auto-detect or use standard codes.
+        generate_audio(
+            model=self.tts_model,
+            text=text,
+            output_path=output_path,
+            # Optional extras:
+            # file_prefix="output",      # default prefix for filenames
+            # lang_code="en",           # or map from tgt_lang
+            # voice="...",              # if the model defines named voices
+            # audio_format="wav",
+            # join_audio=True,
+            # verbose=False,
+        )
 
+    # -------------------------------------------------------------------------
+    # Speech-to-Text (STT)
+    # -------------------------------------------------------------------------
+    def transcribe_audio(self, audio_path: str) -> str:
+        """
+        Transcribe audio to text using MLX-optimized Qwen3-ASR.
+        """
+        print(f"Transcribing audio: {audio_path}")
+
+        # Python API: generate_transcription(model=..., audio=...) style.[web:18][web:10]
+        transcription = generate_transcription(
+            model=self.asr_model,
+            audio=audio_path,
+            # You can also pass output_path to save .txt sidecar
+            # output_path=None,
+        )
+
+        # Depending on version: can be an object with .text or a dict
+        text = getattr(transcription, "text", None)
+        if text is None and isinstance(transcription, dict):
+            text = transcription.get("text", "")
+
+        return (text or "").strip()
+
+    # -------------------------------------------------------------------------
+    # Memory cleanup
+    # -------------------------------------------------------------------------
     def clear_memory(self):
-        """Clears models from memory and triggers garbage collection."""
+        """
+        Clears models from memory and triggers garbage collection.
+        """
         print("Clearing models from memory...")
-        
-        # 1. Move models to CPU to break Metal acceleration links before deletion
-        if hasattr(self, 'stt_model'):
-            try:
-                self.stt_model.to("cpu")
-            except:
-                pass
-            del self.stt_model
-            
-        if hasattr(self, 'mt_models'):
-            for key in list(self.mt_models.keys()):
-                try:
-                    self.mt_models[key].to("cpu")
-                except:
-                    pass
-            self.mt_models.clear()
-            del self.mt_models
-            
-        if hasattr(self, 'mt_tokenizers'):
-            self.mt_tokenizers.clear()
-            del self.mt_tokenizers
 
-        # 2. Force Garbage Collection
+        if hasattr(self, "asr_model"):
+            del self.asr_model
+
+        if hasattr(self, "tts_model"):
+            del self.tts_model
+
+        if hasattr(self, "llm"):
+            del self.llm
+
         gc.collect()
-        
-        # 3. Clear GPU cache
-        if "cuda" in self.device:
-            torch.cuda.empty_cache()
-        elif "mps" in self.device:
-            # Explicitly clear MPS cache for Apple Silicon
+
+        if "mps" in self.device:
             try:
                 torch.mps.empty_cache()
             except AttributeError:
-                # Older torch versions might not have this
                 pass
-            
+
         print("Memory cleanup complete.")
