@@ -2,11 +2,9 @@ import os
 import torch
 import whisper
 import time
-import asyncio
+import gc
 import edge_tts
 from transformers import MarianMTModel, MarianTokenizer
-import argparse
-
 
 class VoiceTranslationPipeline:
     def __init__(self, use_gpu=False):
@@ -16,16 +14,28 @@ class VoiceTranslationPipeline:
             else ("mps" if torch.backends.mps.is_available() else "cpu")
         )
 
-        print(f"Initializing Pipeline on {self.device}")
+        # Calculate project root and models directory
+        self.project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self.models_dir = os.path.join(self.project_root, "models")
+        os.makedirs(self.models_dir, exist_ok=True)
+        
+        # Whisper model directory
+        self.whisper_cache = os.path.join(self.models_dir, "whisper")
+        os.makedirs(self.whisper_cache, exist_ok=True)
 
-        # 1. STT: Whisper Tiny for <2s latency
-        self.stt_model = whisper.load_model("tiny", device=self.device)
+        print(f"Initializing Pipeline on {self.device}")
+        print(f"Models directory: {self.models_dir}")
+
+        # 1. STT: Whisper Tiny (downloading to models/whisper)
+        self.stt_model = whisper.load_model("tiny", device=self.device, download_root=self.whisper_cache)
 
         # 2. MT: Cached models and tokenizers
         self.mt_models = {}
         self.mt_tokenizers = {}
+        self.mt_cache = os.path.join(self.models_dir, "mt")
+        os.makedirs(self.mt_cache, exist_ok=True)
 
-        # 3. TTS: Edge-TTS (handled via async calls)
+        # 3. TTS: Edge-TTS
         self.supported_langs = ["en", "es", "fr", "de"]
 
     def _get_mt_model(self, src, tgt):
@@ -33,8 +43,14 @@ class VoiceTranslationPipeline:
         if key not in self.mt_models:
             model_name = f"Helsinki-NLP/opus-mt-{src}-{tgt}"
             print(f"Loading MT model: {model_name}")
-            self.mt_tokenizers[key] = MarianTokenizer.from_pretrained(model_name)
-            self.mt_models[key] = MarianMTModel.from_pretrained(model_name).to(self.device)
+            
+            # Using cache_dir to ensure models are saved in models/mt
+            self.mt_tokenizers[key] = MarianTokenizer.from_pretrained(
+                model_name, cache_dir=self.mt_cache
+            )
+            self.mt_models[key] = MarianMTModel.from_pretrained(
+                model_name, cache_dir=self.mt_cache
+            ).to(self.device)
             self.mt_models[key].eval()
         return self.mt_models[key], self.mt_tokenizers[key]
 
@@ -66,58 +82,43 @@ class VoiceTranslationPipeline:
         audio, _ = librosa.load(audio_path, sr=16000)
         return audio.astype(np.float32)
 
-    async def process_chunk(self, audio_path, src_lang, tgt_lang, out_audio_path):
-        metrics = {}
-        start_time = time.time()
+    def clear_memory(self):
+        """Clears models from memory and triggers garbage collection."""
+        print("Clearing models from memory...")
+        
+        # 1. Move models to CPU to break Metal acceleration links before deletion
+        if hasattr(self, 'stt_model'):
+            try:
+                self.stt_model.to("cpu")
+            except:
+                pass
+            del self.stt_model
+            
+        if hasattr(self, 'mt_models'):
+            for key in list(self.mt_models.keys()):
+                try:
+                    self.mt_models[key].to("cpu")
+                except:
+                    pass
+            self.mt_models.clear()
+            del self.mt_models
+            
+        if hasattr(self, 'mt_tokenizers'):
+            self.mt_tokenizers.clear()
+            del self.mt_tokenizers
 
-        # STT Stage
-        stt_start = time.time()
-        audio_data = self.load_audio_whisper(audio_path)
-        result = self.stt_model.transcribe(audio_data, fp16=(self.device == "cuda"))
-        original_text = result["text"].strip()
-        metrics["stt_time"] = time.time() - stt_start
-
-        # Translation Stage
-        mt_start = time.time()
-        translated_text = self.translate_text(original_text, src_lang, tgt_lang)
-        metrics["mt_time"] = time.time() - mt_start
-
-        # TTS Stage
-        tts_start = time.time()
-        await self.text_to_speech(translated_text, tgt_lang, out_audio_path)
-        metrics["tts_time"] = time.time() - tts_start
-
-        metrics["total_latency"] = time.time() - start_time
-        return original_text, translated_text, metrics
-
-
-async def main():
-    pipeline = VoiceTranslationPipeline()
-
-    # Calculate base directory relative to this script (src/pipeline.py)
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    audio_input = os.path.join(base_dir, "data", "sample_text_input.wav")
-    output_dir = os.path.join(base_dir, "outputs")
-    os.makedirs(output_dir, exist_ok=True)
-    output_audio = os.path.join(output_dir, "smoke_test_output.wav")
-
-    if os.path.exists(audio_input):
-        print("Warming up models...")
-        # First run to load models
-        await pipeline.process_chunk(audio_input, "en", "es", output_audio)
-
-        print("Starting Smoke Test (Timed)...")
-        orig, trans, metrics = await pipeline.process_chunk(audio_input, "en", "es", output_audio)
-        print(f"Original (EN): {orig}")
-        print(f"Translated (ES): {trans}")
-        print(f"Metrics: {metrics}")
-        if metrics["total_latency"] < 2.0:
-            print("LATENCY CRITERIA MET (< 2.0s)")
-        else:
-            print(f"LATENCY CRITERIA FAILED: {metrics['total_latency']:.2f}s")
-    else:
-        print("Input file missing for smoke test.")
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+        # 2. Force Garbage Collection
+        gc.collect()
+        
+        # 3. Clear GPU cache
+        if "cuda" in self.device:
+            torch.cuda.empty_cache()
+        elif "mps" in self.device:
+            # Explicitly clear MPS cache for Apple Silicon
+            try:
+                torch.mps.empty_cache()
+            except AttributeError:
+                # Older torch versions might not have this
+                pass
+            
+        print("Memory cleanup complete.")

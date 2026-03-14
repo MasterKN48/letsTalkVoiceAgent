@@ -32,3 +32,5 @@ data_temp/
 *.wav
 benchmark_report.txt
 .DS_Store
+
+models/
