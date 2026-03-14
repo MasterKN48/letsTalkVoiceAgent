@@ -1,0 +1,13 @@
+openai-whisper
+transformers
+sentencepiece
+sacremoses
+gTTS
+edge-tts
+librosa
+numpy
+soundfile
+jiwer
+sacrebleu
+torch
+torchaudio
