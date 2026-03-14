@@ -42,7 +42,7 @@ class VoiceTranslationPipeline:
 
         # 1. STT model
         ASR_MODEL = os.getenv("ASR_MODEL", "openai/whisper-tiny")
-        self.asr_path = self._ensure_local_model(ASR_MODEL, "asr")
+        self.asr_path = self._ensure_local_model(ASR_MODEL, "whisper-tiny")
         # Load Whisper model from your models/asr directory
         print(f"Loading Whisper tiny from: {self.asr_path}")
         self.whisper_model = whisper.load_model(
@@ -56,7 +56,7 @@ class VoiceTranslationPipeline:
             "TTS_MODEL",
             "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit",
         )
-        self.tts_path = self._ensure_local_model(self.tts_repo, "tts")
+        self.tts_path = self._ensure_local_model(self.tts_repo, "qwen3-tts-0.6b")
         self.tts_model = load_tts(self.tts_path)
 
         # 3. Local translation LLM
