@@ -24,6 +24,8 @@ dependencies = [
     "langgraph>=1.1.2",
     "dotenv>=0.9.9",
     "ipywidgets>=8.1.8",
+    "ffmpeg>=1.4",
+    "openai-whisper>=20250625",
 ]
 
 [tool.setuptools.packages.find]
