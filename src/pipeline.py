@@ -80,9 +80,9 @@ class VoiceTranslationPipeline:
         # 2. TTS model (Qwen3-TTS 3-second voice clone capable).
         self.tts_repo = os.getenv(
             "TTS_MODEL",
-            "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-4bit",
+            "mlx-community/chatterbox-4bit",
         )
-        self.tts_path = self._ensure_local_model(self.tts_repo, "qwen3-tts-0.6b")
+        self.tts_path = self._ensure_local_model(self.tts_repo, "chatterbox-4bit")
         self.tts_model = load_tts(self.tts_path)
 
         # 3. Local translation LLM
@@ -137,9 +137,9 @@ class VoiceTranslationPipeline:
             print("Duration <= 3s; using default TTS voice (no clone).")
             return None
 
-        print("Duration > 3s; creating 5-second reference clip for voice cloning.")
-        # Load only the first 5 seconds at native sample rate.
-        y, sr = librosa.load(src_audio_path, sr=None, offset=0.0, duration=5.0)
+        print("Duration > 3s; creating 7-second reference clip for voice cloning.")
+        # Load only the first 7 seconds at native sample rate.
+        y, sr = librosa.load(src_audio_path, sr=None, offset=0.0, duration=7.0)
 
         os.makedirs(work_dir, exist_ok=True)
         ref_path = os.path.join(work_dir, "voice_ref.wav")
@@ -194,13 +194,13 @@ class VoiceTranslationPipeline:
             "text": text,
             "output_path": output_path,
             "audio_format": "wav",
-            "language": tgt_lang,
+            "lang_code": "hi" if tgt_lang == Language.HINDI else "en",
+            # "file_prefix": f"{tgt_lang}_",
             # You can add stream=True, streaming_interval, etc. if you want streaming.
         }
         if ref_audio:
             kwargs["ref_audio"] = ref_audio
             if ref_text:
-                print("### ref_text", ref_text)
                 kwargs["ref_text"] = ref_text
 
         # Run heavy TTS in a worker thread so we don't block the event loop.
@@ -221,23 +221,20 @@ class VoiceTranslationPipeline:
         if src_lang == Language.ENGLISH:
             print(f"Transcribing with Whisper (EN): {audio_path}")
             # Use MPS acceleration if available, CPU fallback
-            fp16 = torch.backends.mps.is_available()
             result = self.whisper_en.transcribe(
                 audio_path,
-                language="en",
-                fp16=fp16,
+                language="English",
+                fp16=False,
                 verbose=False,
-                word_timestamps=False,
+                # word_timestamps=False,
             )
             text = result["text"].strip()
-            print("#### WHISPER EN RESULT: ", text)
             return text
 
         elif src_lang == Language.HINDI:
             print(f"Transcribing with Transformers Pipeline (HI): {audio_path}")
             prediction = self.asr_pipe_hi(audio_path, return_timestamps=True)
             text = prediction["text"].strip()
-            print("#### WHISPER HI RESULT: ", text)
             return text
 
         else:
