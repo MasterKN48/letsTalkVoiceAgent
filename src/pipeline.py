@@ -2,6 +2,7 @@ import os
 import gc
 import time
 import asyncio
+from enum import Enum
 from dotenv import load_dotenv
 import torch
 
@@ -23,6 +24,19 @@ from mlx_audio.tts.utils import load_model as load_tts
 from mlx_audio.tts.generate import generate_audio
 
 
+class Language(str, Enum):
+    ENGLISH = "english"
+    HINDI = "hindi"
+
+    @classmethod
+    def validate(cls, lang: str):
+        if lang.lower() not in [l.value for l in cls]:
+            raise ValueError(
+                f"Unsupported language: '{lang}'. "
+                f"Supported languages are: {[l.value for l in cls]}"
+            )
+
+
 class VoiceTranslationPipeline:
     def __init__(self, use_gpu: bool = False):
         self.device = (
@@ -40,14 +54,24 @@ class VoiceTranslationPipeline:
 
         load_dotenv()
 
-        # 1. STT model
-        ASR_MODEL = os.getenv("ASR_MODEL", "openai/whisper-tiny")
-        self.asr_path = self._ensure_local_model(ASR_MODEL, "whisper-tiny")
-        # Load Whisper model from your models/asr directory
-        print(f"Loading Whisper tiny from: {self.asr_path}")
-        self.whisper_model = whisper.load_model(
+        # 1. STT models (English vs Hindi)
+        ASR_MODEL_EN = os.getenv("ASR_MODEL_EN", "openai/whisper-tiny")
+        ASR_MODEL_HI = os.getenv("ASR_MODEL_HI", "ARTPARK-IISc/whisper-tiny-vaani-hindi")
+
+        self.asr_path_en = self._ensure_local_model(ASR_MODEL_EN, "whisper-tiny")
+        self.asr_path_hi = self._ensure_local_model(ASR_MODEL_HI, "whisper-tiny-hi")
+
+        print(f"Loading English Whisper from: {self.asr_path_en}")
+        self.whisper_en = whisper.load_model(
             name="tiny",
-            download_root=self.asr_path,  # saves/loads from models/asr
+            download_root=self.asr_path_en,
+            device=self.device,
+        )
+
+        print(f"Loading Hindi Whisper from: {self.asr_path_hi}")
+        self.whisper_hi = whisper.load_model(
+            name="tiny",
+            download_root=self.asr_path_hi,
             device=self.device,
         )
 
@@ -125,12 +149,15 @@ class VoiceTranslationPipeline:
     # Translation LLM
     # -------------------------------------------------------------------------
     def translate_text(self, text: str, src_lang: str, tgt_lang: str) -> str:
+        # Validate languages
+        Language.validate(src_lang)
+        Language.validate(tgt_lang)
+
         if src_lang == tgt_lang or not text.strip():
             return text
 
         print(f"Translating via Local LLM: {src_lang} -> {tgt_lang}")
         chain = self.translate_prompt | self.llm
-        # BUG FIX: pass src_lang variable, not literal "src_lang"
         response = chain.invoke({"src_lang": src_lang, "tgt_lang": tgt_lang, "text": text})
         return response.content.strip()
 
@@ -151,6 +178,9 @@ class VoiceTranslationPipeline:
         If ref_text is also provided, MLX-Audio will NOT try to transcribe ref_audio itself.
         `output_path` is treated as an output directory.
         """
+        # Validate target language
+        Language.validate(tgt_lang)
+
         print(
             f"Generating TTS for language: {tgt_lang} "
             f"(voice clone: {'ON' if ref_audio else 'OFF'})"
@@ -178,20 +208,30 @@ class VoiceTranslationPipeline:
     # -------------------------------------------------------------------------
     # STT
     # -------------------------------------------------------------------------
-    def transcribe_audio(self, audio_path: str) -> str:
+    def transcribe_audio(self, audio_path: str, src_lang: str) -> str:
         """
-        Transcribe audio using OpenAI Whisper tiny from models/asr.
-        Always outputs English text.
+        Transcribe audio using OpenAI Whisper.
+        Selects model based on src_lang.
         """
-        print(f"Transcribing with OpenAI Whisper: {audio_path}")
+        # Select model and language code
+        if src_lang == Language.ENGLISH:
+            model = self.whisper_en
+            lang = "en"
+        elif src_lang == Language.HINDI:
+            model = self.whisper_hi
+            lang = "hi"
+        else:
+            raise ValueError(f"No STT model configured for language: {src_lang}")
+
+        print(f"Transcribing with Whisper ({src_lang}): {audio_path}")
 
         # Use MPS acceleration if available, CPU fallback
         fp16 = torch.backends.mps.is_available()
 
-        result = self.whisper_model.transcribe(
+        result = model.transcribe(
             audio_path,
-            language="en",  # Force English transcription
-            fp16=fp16,  # MPS acceleration if available
+            language=lang,
+            fp16=fp16,
             verbose=False,
             word_timestamps=False,
         )
@@ -204,8 +244,10 @@ class VoiceTranslationPipeline:
     def clear_memory(self):
         print("Clearing models from memory...")
 
-        if hasattr(self, "whisper_model"):
-            del self.whisper_model
+        if hasattr(self, "whisper_en"):
+            del self.whisper_en
+        if hasattr(self, "whisper_hi"):
+            del self.whisper_hi
         if hasattr(self, "tts_model"):
             del self.tts_model
         if hasattr(self, "llm"):
