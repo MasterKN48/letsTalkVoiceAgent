@@ -42,23 +42,25 @@ The workflow maintains a persistent state throughout the execution:
 ## Workflow Nodes
 
 ### 1. STT Node (Speech-to-Text)
-- **Model**: OpenAI's Whisper (Tiny) via `openai-whisper`.
-- **Function**: Transcribes the input audio into English text. 
-- **Optimization**: Currently forced to English to simplify the pipeline, using MPS acceleration on Apple Silicon if available.
+- **Models**: 
+  - **English**: OpenAI Whisper Tiny via `openai-whisper`.
+  - **Hindi**: Whisper Tiny Hindi via `transformers.pipeline`.
+- **Function**: Transcribes the input audio into text.
+- **Optimization**: Uses MPS acceleration on Apple Silicon for English and standard CPU/GPU for Hindi.
 
 ### 2. MT Node (Machine Translation)
 - **Model**: Local LLM (e.g., Qwen-3.5-0.8B).
-- **Function**: Translates the transcribed text from English to the target language (e.g., Hindi).
+- **Function**: Translates the transcribed text between English and Hindi.
 - **Communication**: Interfaces via an OpenAI-compatible API (LM Studio, Ollama, etc.).
 
 ### 3. Voice Clone Node
-- **Function**: Analyzes the source audio. If it's longer than 3 seconds, it extracts a 3-second clip to be used as a reference for voice cloning in the TTS stage.
-- **Parallelism**: Runs concurrently with the MT node to minimize total latency.
+- **Function**: Analyzes the source audio. If it's longer than 3 seconds, it extracts a clip (up to 7 seconds) to be used as a reference for voice cloning in the TTS stage.
+- **Parallelism**: Runs concurrently with the MT node to reduce total end-to-end latency.
 
 ### 4. TTS Node (Text-to-Speech)
 - **Model**: Qwen3-TTS (0.6B) via `mlx-audio`.
-- **Function**: Generates the final translated audio.
-- **Voice Cloning**: If a reference clip was generated, it uses it to clone the original speaker's voice for the translated output.
+- **Function**: Generates the final translated audio in the target language.
+- **Voice Cloning**: If a reference clip was generated, it uses it for zero-shot voice cloning, making the agent sound like the original speaker.
 
 ### 5. Cleanup Node
-- **Function**: Deletes temporary files (like the voice clone reference clip) and clears models from memory (CPU/GPU/MPS) to prevent resource leakage.
+- **Function**: Deletes temporary files (like the voice clone reference clip) and clears models from memory (`del` + `gc.collect()`) to prevent resource leakage on Apple Silicon.

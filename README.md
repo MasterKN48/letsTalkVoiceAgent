@@ -1,4 +1,4 @@
-# Let's Talk: Real-time Voice Translation Agent
+![Project Screenshot](project_screenshot.png)
 
 A high-performance, fully local, and open-source real-time voice translation agent built with **LangGraph** and **MLX-Audio**. This project specifically targets seamless **English to Hindi** (and vice versa) voice translation with a sub-2-second latency goal.
 
@@ -6,7 +6,7 @@ A high-performance, fully local, and open-source real-time voice translation age
 
 - **Agentic Workflow**: Orchestrated by **LangGraph** for modular, stateful execution.
 - **Native MLX Support**: Optimized for Apple Silicon using `mlx-audio` for ASR and TTS.
-- **Local LLM Translation**: Uses high-performance local LLMs (like Qwen 3.5) for translation via OpenAI-compatible APIs.
+- **Bi-directional Translation**: Supports both English -> Hindi and Hindi -> English translation.
 - **Zero-Shot Voice Cloning**: Clones the source speaker's voice for the translated output using Qwen3-TTS.
 - **Fully Local**: Runs entirely on your machine—no data leaves your device.
 - **Resource Efficient**: Built-in memory management and cleanup nodes.
@@ -14,8 +14,10 @@ A high-performance, fully local, and open-source real-time voice translation age
 ## 🛠️ Tech Stack
 
 - **Orchestration**: `langgraph`
-- **Speech-to-Text (STT)**: OpenAI Whisper Tiny (optimized via `openai-whisper`)
-- **Machine Translation (MT)**: Local LLM (Qwen 3.5) via `langchain-openai`
+- **Speech-to-Text (STT)**: 
+  - English: OpenAI Whisper Tiny (via `openai-whisper`)
+  - Hindi: Whisper Tiny Hindi (via `transformers` pipeline)
+- **Machine Translation (MT)**: Local LLM (e.g., Qwen 3.5) via `langchain-openai`
 - **Text-to-Speech (TTS)**: Qwen3-TTS (0.6B) via `mlx-audio`
 - **Hardware Acceleration**: Apple Silicon (MPS) optimized
 
@@ -25,12 +27,14 @@ A high-performance, fully local, and open-source real-time voice translation age
 .
 ├── src/
 │   ├── pipeline.py            # Core MLX & LLM logic
+│   ├── frontend.py            # Streamlit-based web interface
 │   └── agent_langgraph.ipynb  # LangGraph implementation & demo
 ├── models/                    # Locally cached models
 ├── inputs/                    # Input audio files for testing
 ├── outputs/                   # Generated translated audio
 ├── agents.md                  # Detailed agent architecture documentation
 ├── README.md                  # Project overview
+├── project_screenshot.png     # Visual overview of the application
 └── pyproject.toml             # Dependency management (uv)
 ```
 
@@ -61,18 +65,22 @@ LLM_MODEL=qwen3.5-0.8b
 
 ## 📖 Usage
 
-Run the `agent_langgraph.ipynb` notebook to see the agent in action. It follows this flow:
-1. **Transcribe**: Converts English voice to text.
-2. **Translate**: Uses local LLM to translate text to Hindi.
-3. **Synthesize**: Generates Hindi speech with your original voice cloned.
+### Web Interface
+Run the Streamlit frontend for an interactive experience:
+```bash
+streamlit run src/frontend.py
+```
+
+### Notebook Demo
+Run the `agent_langgraph.ipynb` notebook to see the agent flow in detail.
 
 For details on the agent architecture, see [agents.md](./agents.md).
 
 ## 🗺️ Roadmap
 
+- [x] **UI Frontend**: A clean web interface for interaction.
 - [ ] **FastAPI Integration**: Expose the agent via a REST API.
 - [ ] **WebSocket Support**: Real-time streaming for continuous conversation.
-- [ ] **Bi-directional Translation**: Full Hindi -> English support.
-- [ ] **UI Frontend**: A clean web interface for interaction.
+- [ ] **Fine-tuned Translation**: Improving translation accuracy for specific domains.
 
 ---
