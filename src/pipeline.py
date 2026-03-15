@@ -11,6 +11,8 @@ from langchain_core.prompts import ChatPromptTemplate
 from huggingface_hub import snapshot_download
 from transformers import pipeline as hf_pipeline
 
+load_dotenv()
+
 # Audio utils
 import librosa
 import soundfile as sf  # librosa depends on this; used for writing clips.
@@ -53,8 +55,6 @@ class VoiceTranslationPipeline:
         print("Initializing Native MLX-Audio Pipeline")
         print(f"Models directory: {self.models_dir}")
 
-        load_dotenv()
-
         # 1. STT models (English vs Hindi)
         ASR_MODEL_EN = os.getenv("ASR_MODEL_EN", "openai/whisper-tiny")
         ASR_MODEL_HI = os.getenv("ASR_MODEL_HI", "collabora/whisper-tiny-hindi")
@@ -80,7 +80,7 @@ class VoiceTranslationPipeline:
         # 2. TTS model (Qwen3-TTS 3-second voice clone capable).
         self.tts_repo = os.getenv(
             "TTS_MODEL",
-            "mlx-community/chatterbox-4bit",
+            "chatterbox-4bit",
         )
         self.tts_path = self._ensure_local_model(self.tts_repo, "chatterbox-4bit")
         self.tts_model = load_tts(self.tts_path)

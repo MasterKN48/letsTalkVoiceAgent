@@ -26,6 +26,9 @@ dependencies = [
     "ipywidgets>=8.1.8",
     "ffmpeg>=1.4",
     "openai-whisper>=20250625",
+    "streamlit>=1.31.0",
+    "audio-recorder-streamlit>=0.0.8",
+    "watchdog>=6.0.0",
 ]
 
 [tool.setuptools.packages.find]
