@@ -57,10 +57,15 @@ source .venv/bin/activate
 ```
 
 ### 3. Environment Variables
-Copy `.env.example` to `.env` and configure your local LLM URL:
+Copy `.env.example` to `.env` and configure your environment:
 ```bash
-LOCAL_LLM_URL=http://localhost:1234/v1
+HF_TOKEN=''
+LOCAL_LLM_URL=http://127.0.0.1:1234/v1
+ASR_MODEL_EN=openai/whisper-tiny
+ASR_MODEL_HI=collabora/whisper-tiny-hindi
+TTS_MODEL=chatterbox-4bit
 LLM_MODEL=qwen3.5-0.8b
+HF_HUB_CACHE="/models/hub"
 ```
 
 ## 📖 Usage
