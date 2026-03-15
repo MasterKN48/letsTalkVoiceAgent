@@ -64,7 +64,9 @@ with col1:
     )
     
     if audio_bytes:
-        st.success("✅ Recording Captured! Click 'Process' below to continue.")
+        st.success("✅ Recording Captured!")
+        st.audio(audio_bytes, format="audio/wav")
+        st.info("Click 'Process' below to translate and generate a voiced response.")
     else:
         st.info("🎤 Ready to record...")
 
@@ -147,5 +149,7 @@ with col2:
 # --- Footer ---
 st.write("---")
 if st.button("Clear Memory & Refresh"):
-    st.session_state.pipeline.clear_memory()
+    if "pipeline" in st.session_state:
+        st.session_state.pipeline.clear_memory()
+        del st.session_state.pipeline
     st.rerun()

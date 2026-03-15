@@ -161,6 +161,7 @@ class VoiceTranslationPipeline:
         print(f"Translating via Local LLM: {src_lang} -> {tgt_lang}")
         chain = self.translate_prompt | self.llm
         response = chain.invoke({"src_lang": src_lang, "tgt_lang": tgt_lang, "text": text})
+        print(f"Translation result: {response}")
         return response.content.strip()
 
     # -------------------------------------------------------------------------
@@ -233,8 +234,9 @@ class VoiceTranslationPipeline:
 
         elif src_lang == Language.HINDI:
             print(f"Transcribing with Transformers Pipeline (HI): {audio_path}")
-            prediction = self.asr_pipe_hi(audio_path, return_timestamps=True)
+            prediction = self.asr_pipe_hi(audio_path, return_timestamps=False)
             text = prediction["text"].strip()
+            print(f"Transcribed text: {text}")
             return text
 
         else:
