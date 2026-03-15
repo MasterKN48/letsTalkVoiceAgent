@@ -9,6 +9,7 @@ import torch
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from huggingface_hub import snapshot_download
+from transformers import pipeline as hf_pipeline
 
 # Audio utils
 import librosa
@@ -56,7 +57,7 @@ class VoiceTranslationPipeline:
 
         # 1. STT models (English vs Hindi)
         ASR_MODEL_EN = os.getenv("ASR_MODEL_EN", "openai/whisper-tiny")
-        ASR_MODEL_HI = os.getenv("ASR_MODEL_HI", "ARTPARK-IISc/whisper-tiny-vaani-hindi")
+        ASR_MODEL_HI = os.getenv("ASR_MODEL_HI", "collabora/whisper-tiny-hindi")
 
         self.asr_path_en = self._ensure_local_model(ASR_MODEL_EN, "whisper-tiny")
         self.asr_path_hi = self._ensure_local_model(ASR_MODEL_HI, "whisper-tiny-hi")
@@ -69,9 +70,10 @@ class VoiceTranslationPipeline:
         )
 
         print(f"Loading Hindi Whisper from: {self.asr_path_hi}")
-        self.whisper_hi = whisper.load_model(
-            name="tiny",
-            download_root=self.asr_path_hi,
+        self.asr_pipe_hi = hf_pipeline(
+            "automatic-speech-recognition",
+            model=self.asr_path_hi,
+            chunk_length_s=30,
             device=self.device,
         )
 
@@ -135,14 +137,14 @@ class VoiceTranslationPipeline:
             print("Duration <= 3s; using default TTS voice (no clone).")
             return None
 
-        print("Duration > 3s; creating 3-second reference clip for voice cloning.")
-        # Load only the first 3 seconds at native sample rate.
-        y, sr = librosa.load(src_audio_path, sr=None, offset=0.0, duration=3.0)
+        print("Duration > 3s; creating 5-second reference clip for voice cloning.")
+        # Load only the first 5 seconds at native sample rate.
+        y, sr = librosa.load(src_audio_path, sr=None, offset=0.0, duration=5.0)
 
         os.makedirs(work_dir, exist_ok=True)
         ref_path = os.path.join(work_dir, "voice_ref.wav")
         sf.write(ref_path, y, sr)
-        print(f"Wrote 3s reference clip to: {ref_path}")
+        print(f"Wrote 5s reference clip to: {ref_path}")
         return ref_path
 
     # -------------------------------------------------------------------------
@@ -192,11 +194,13 @@ class VoiceTranslationPipeline:
             "text": text,
             "output_path": output_path,
             "audio_format": "wav",
+            "language": tgt_lang,
             # You can add stream=True, streaming_interval, etc. if you want streaming.
         }
         if ref_audio:
             kwargs["ref_audio"] = ref_audio
             if ref_text:
+                print("### ref_text", ref_text)
                 kwargs["ref_text"] = ref_text
 
         # Run heavy TTS in a worker thread so we don't block the event loop.
@@ -215,28 +219,29 @@ class VoiceTranslationPipeline:
         """
         # Select model and language code
         if src_lang == Language.ENGLISH:
-            model = self.whisper_en
-            lang = "en"
+            print(f"Transcribing with Whisper (EN): {audio_path}")
+            # Use MPS acceleration if available, CPU fallback
+            fp16 = torch.backends.mps.is_available()
+            result = self.whisper_en.transcribe(
+                audio_path,
+                language="en",
+                fp16=fp16,
+                verbose=False,
+                word_timestamps=False,
+            )
+            text = result["text"].strip()
+            print("#### WHISPER EN RESULT: ", text)
+            return text
+
         elif src_lang == Language.HINDI:
-            model = self.whisper_hi
-            lang = "hi"
+            print(f"Transcribing with Transformers Pipeline (HI): {audio_path}")
+            prediction = self.asr_pipe_hi(audio_path, return_timestamps=True)
+            text = prediction["text"].strip()
+            print("#### WHISPER HI RESULT: ", text)
+            return text
+
         else:
             raise ValueError(f"No STT model configured for language: {src_lang}")
-
-        print(f"Transcribing with Whisper ({src_lang}): {audio_path}")
-
-        # Use MPS acceleration if available, CPU fallback
-        fp16 = torch.backends.mps.is_available()
-
-        result = model.transcribe(
-            audio_path,
-            language=lang,
-            fp16=fp16,
-            verbose=False,
-            word_timestamps=False,
-        )
-
-        return result["text"].strip()
 
     # -------------------------------------------------------------------------
     # Memory cleanup
@@ -246,8 +251,8 @@ class VoiceTranslationPipeline:
 
         if hasattr(self, "whisper_en"):
             del self.whisper_en
-        if hasattr(self, "whisper_hi"):
-            del self.whisper_hi
+        if hasattr(self, "asr_pipe_hi"):
+            del self.asr_pipe_hi
         if hasattr(self, "tts_model"):
             del self.tts_model
         if hasattr(self, "llm"):
