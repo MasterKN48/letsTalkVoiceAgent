@@ -1,95 +1,78 @@
-# Real-time Voice Translation Pipeline
+# Let's Talk: Real-time Voice Translation Agent
 
-A high-performance, low-latency voice translation pipeline that converts spoken input from one language to spoken output in another. This project aims for a sub-2-second end-to-end latency, making it suitable for near real-time applications.
+A high-performance, fully local, and open-source real-time voice translation agent built with **LangGraph** and **MLX-Audio**. This project specifically targets seamless **English to Hindi** (and vice versa) voice translation with a sub-2-second latency goal.
 
 ## 🚀 Key Features
 
-- **STT**: Powered by OpenAI's Whisper (Tiny model).
-- **Machine Translation (MT)**: Helsinki-NLP's Opus-MT models via Transformers.
-- **Text-to-Speech (TTS)**: Microsoft's `edge-tts` for natural voice synthesis.
-- **Agent Architecture**: Uses **LangGraph** for a stateful, modular workflow (STT -> MT -> TTS -> Cleanup).
-- **Local Model Caching**: Models are stored in a local `models/` directory for persistent, low-latency access.
-- **Resource Management**: Automatic GPU/RAM cleanup after processing via a `clear_memory` stage.
+- **Agentic Workflow**: Orchestrated by **LangGraph** for modular, stateful execution.
+- **Native MLX Support**: Optimized for Apple Silicon using `mlx-audio` for ASR and TTS.
+- **Local LLM Translation**: Uses high-performance local LLMs (like Qwen 3.5) for translation via OpenAI-compatible APIs.
+- **Zero-Shot Voice Cloning**: Clones the source speaker's voice for the translated output using Qwen3-TTS.
+- **Fully Local**: Runs entirely on your machine—no data leaves your device.
+- **Resource Efficient**: Built-in memory management and cleanup nodes.
 
 ## 🛠️ Tech Stack
 
-- **Python 3.10+**
 - **Orchestration**: `langgraph`
-- **STT**: `openai-whisper`
-- **MT**: `transformers`, `torch`
-- **TTS**: `edge-tts`
+- **Speech-to-Text (STT)**: OpenAI Whisper Tiny (optimized via `openai-whisper`)
+- **Machine Translation (MT)**: Local LLM (Qwen 3.5) via `langchain-openai`
+- **Text-to-Speech (TTS)**: Qwen3-TTS (0.6B) via `mlx-audio`
+- **Hardware Acceleration**: Apple Silicon (MPS) optimized
 
 ## 📁 Project Structure
 
 ```text
 .
 ├── src/
-│   ├── pipeline.py            # Core logic and model utilities
-│   ├── agent_langgraph.ipynb  # LangGraph agent implementation
-│   └── pipeline.ipynb         # Step-by-step documented notebook
-├── models/                    # Locally cached models (Whisper, MarianMT)
-├── data/                      # Input audio files for testing
-├── outputs/                   # Generated translated audio files
-├── README.md                  # Project documentation
-├── requirements.txt           # Python dependencies
-└── pyproject.toml             # Project configuration
+│   ├── pipeline.py            # Core MLX & LLM logic
+│   └── agent_langgraph.ipynb  # LangGraph implementation & demo
+├── models/                    # Locally cached models
+├── inputs/                    # Input audio files for testing
+├── outputs/                   # Generated translated audio
+├── agents.md                  # Detailed agent architecture documentation
+├── README.md                  # Project overview
+└── pyproject.toml             # Dependency management (uv)
 ```
 
-## ⚙️ Installation
+## ⚙️ Quick Start
 
-1. **Clone the repository**:
+### 1. Prerequisites
+- **Python 3.10+** (Recommended: 3.12)
+- **uv**: Fast Python package manager
+- **Local LLM Server**: LM Studio, Ollama, or vLLM running an OpenAI-compatible API.
 
-   ```bash
-   git clone <repository-url>
-   cd demo
-   ```
+### 2. Installation
+```bash
+# Clone the repository
+git clone <repository-url>
+cd letsTalkVoiceAgent
 
-2. **Set up the project with uv**:
-   ```bash
-   uv sync
-   ```
+# Setup environment
+uv sync
+source .venv/bin/activate
+```
 
-3. **Activate the environment**:
-   ```bash
-   source .venv/bin/activate  # On macOS/Linux
-   ```
+### 3. Environment Variables
+Copy `.env.example` to `.env` and configure your local LLM URL:
+```bash
+LOCAL_LLM_URL=http://localhost:1234/v1
+LLM_MODEL=qwen3.5-0.8b
+```
 
 ## 📖 Usage
 
-### Using the LangGraph Agent
+Run the `agent_langgraph.ipynb` notebook to see the agent in action. It follows this flow:
+1. **Transcribe**: Converts English voice to text.
+2. **Translate**: Uses local LLM to translate text to Hindi.
+3. **Synthesize**: Generates Hindi speech with your original voice cloned.
 
-Open the `agent_langgraph.ipynb` notebook to run the full pipeline as a stateful agent:
+For details on the agent architecture, see [agents.md](./agents.md).
 
-```bash
-jupyter notebook src/agent_langgraph.ipynb
-```
+## 🗺️ Roadmap
 
-The agent orchestrates the following flow:
-
-1. **STT Node**: Transcribes the audio.
-2. **MT Node**: Translates the text.
-3. **TTS Node**: Generates the audio output.
-4. **Cleanup Node**: Frees up system memory (RAM/GPU).
-
-## 🌍 Supported Languages
-
-The pipeline currently supports the following languages for both translation and synthesis:
-
-| Code | Language | Neural Voice (Edge-TTS) |
-| :--- | :------- | :---------------------- |
-| `en` | English  | `en-US-GuyNeural`       |
-| `es` | Spanish  | `es-ES-AlvaroNeural`    |
-| `fr` | French   | `fr-FR-HenriNeural`     |
-| `de` | German   | `de-DE-ConradNeural`    |
-
-## 📊 Performance Benchmarks
-
-The pipeline is designed with a **2.0s latency target**.
-Current metrics tracked:
-
-- **STT Time**: Whisper Tiny transcription latency.
-- **MT Time**: Opus-MT translation latency.
-- **TTS Time**: Edge-TTS synthesis and download time.
-- **Total Latency**: Total end-to-end time.
+- [ ] **FastAPI Integration**: Expose the agent via a REST API.
+- [ ] **WebSocket Support**: Real-time streaming for continuous conversation.
+- [ ] **Bi-directional Translation**: Full Hindi -> English support.
+- [ ] **UI Frontend**: A clean web interface for interaction.
 
 ---
